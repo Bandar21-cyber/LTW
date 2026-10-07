@@ -297,12 +297,16 @@ body.signup-only #tab-signup .card{max-width:640px}
           <input type="hidden" name="available_dates">
           <input type="hidden" name="available_times">
           <input type="hidden" name="registration_type" value="General">
-          <div id="suWardWrap" hidden style="margin-bottom:12px">
+          <input type="hidden" name="name">
+          <div class="grid2">
+            <div><label class="f" for="suFirst">First name *</label><input id="suFirst" name="first_name" autocomplete="given-name" required></div>
+            <div><label class="f" for="suLast">Last name *</label><input id="suLast" name="last_name" autocomplete="family-name" required></div>
+          </div>
+          <div id="suWardWrap" hidden style="margin-top:12px">
             <label class="f" for="suWard">Ward *</label>
             <select name="ward" id="suWard"></select>
           </div>
-          <div class="grid2">
-            <div><label class="f">Full name *</label><input name="name" required></div>
+          <div class="grid2" style="margin-top:12px">
             <div><label class="f">Phone *</label><input name="phone" type="tel" required></div>
             <div><label class="f">Email *</label><input name="email" type="email" required></div>
           </div>
@@ -395,7 +399,8 @@ const CONFIG = {
      To add or change an admin, generate a new salt + hash of "<email lowercase>:<password>" (310,000 iterations). */
   admins: [
     { email: "badams@uvu.edu",        salt: "eccc1c7b5139b656ddda54f9a7acf6f4", hash: "23ba8183f83e9a6764b867ff5dd2e0dbea2083c8fadbc8118f97035c3d1828dd" },
-    { email: "r.huntsmanb@gmail.com", salt: "9b5c25e578ad5309bbdd7253164e4981", hash: "703e839c8130ce6a5922034f8a448fbecc8e5b7f06053ef62aac7fae9a10b78c" }
+    { email: "r.huntsmanb@gmail.com", salt: "9b5c25e578ad5309bbdd7253164e4981", hash: "703e839c8130ce6a5922034f8a448fbecc8e5b7f06053ef62aac7fae9a10b78c" },
+    { email: "spencer.thunell@gmail.com", salt: "a63345dc53ab32b4011cb049a23792ac", hash: "b27f81860cc588d26341bed86f206739c47de22d4dde1da4f4c4041ec4a87bf9" }
   ],
   pbkdf2Iterations: 310000
 };
@@ -710,6 +715,9 @@ suForm.addEventListener("submit", async e => {
     if (!wardEl.value){ msg.textContent = "Please select your ward."; wardEl.focus(); return; }
   } else wardEl.value = "";
   suForm.elements.registration_type.value = signupMode === "ward" ? "Ward Member" : "General";
+  const first = suForm.elements.first_name.value.trim(), last = suForm.elements.last_name.value.trim();
+  if (!first || !last){ msg.textContent = "Please enter your first and last name."; (first ? suForm.elements.last_name : suForm.elements.first_name).focus(); return; }
+  suForm.elements.name.value = `${first} ${last}`;
   if (!dates.length || !times.length){ msg.textContent = "Please choose at least one date and one time."; return; }
   const giftEl = suForm.elements.musical_gift;
   if (times.some(isMusicSlot)){
@@ -922,7 +930,8 @@ function parseCSV(t){
 /* Add or update one volunteer from a sign-up (Netlify submission data or CSV row). Matches by email. */
 function upsertSignup(f){
   const str = k => String(f[k] ?? "").trim();
-  const name = str("name"); if (!name) return null;
+  const name = str("name") || [str("first_name"), str("last_name")].filter(Boolean).join(" ");
+  if (!name) return null;
   const norm = x => x.replace(/\s+/g, "").toLowerCase();
   const wardRaw = str("ward");
   const data = {
@@ -948,7 +957,7 @@ $("#importCsv").addEventListener("change", async e => {
   let added = 0, updated = 0;
   rows.slice(1).forEach(r => {
     const res = upsertSignup({
-      name: col(r, "name", "full_name"), phone: col(r, "phone"), email: col(r, "email"), notes: col(r, "notes"),
+      name: col(r, "name", "full_name"), first_name: col(r, "first_name"), last_name: col(r, "last_name"), phone: col(r, "phone"), email: col(r, "email"), notes: col(r, "notes"),
       musical_gift: col(r, "musical_gift", "music"), ward: col(r, "ward"),
       available_dates: col(r, "available_dates"), available_times: col(r, "available_times")
     });
