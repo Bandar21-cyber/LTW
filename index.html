@@ -124,9 +124,10 @@ body.login-mode > header.brand, body.login-mode > .wrap{display:none}
 .login-form button{width:100%;background:#fff;color:var(--red);border:0;font-weight:700;padding:11px;font-size:1rem}
 .login-form button:hover{background:var(--pink-2)}
 .login-err{color:#fff;font-weight:700;min-height:1.3em;margin:0 0 10px;font-size:.95rem}
-.login-back{color:var(--pink-4);margin-top:22px;display:inline-block}
-.login-back:hover{color:#fff}
 .login-form{max-width:none}
+.login-msg{min-height:1.2em;margin:8px 0;font-size:.9rem}
+.login-msg.err{color:var(--red);font-weight:600}
+.login-msg.ok{color:var(--full);font-weight:600}
 
 /* Registration form: Giving Machine photo beside the form, like the deck's title slide */
 .signup-photo{display:none}
@@ -148,10 +149,10 @@ body.signup-only #tab-signup .card{max-width:640px}
 </style>
 </head>
 <body>
-<div class="signup-photo"><img src="assets/giving-machine.jpg" alt="A child in a winter hat choosing a gift at a Light the World Giving Machine"></div>
+<div class="signup-photo"><img src="/assets/giving-machine.jpg" alt="A child in a winter hat choosing a gift at a Light the World Giving Machine"></div>
 <header class="brand">
   <div class="brand-in">
-    <img class="brand-logo" src="assets/light-the-world-logo-white.png" alt="Light the World">
+    <img class="brand-logo" src="/assets/light-the-world-logo-white.png" alt="Light the World">
     <div>
       <div class="eyebrow">Giving Machine</div>
       <h1 id="eventName">Volunteer Schedule</h1>
@@ -167,15 +168,12 @@ body.signup-only #tab-signup .card{max-width:640px}
         <button onclick="copySignupLink('ward-signup')">Copy ward link</button>
         <button onclick="logout()">Log out</button>
       </div>
-      <div class="row noprint public-only">
-        <button onclick="openLogin()">Admin login</button>
-      </div>
   </div>
 </header>
 
 <div id="loginPage" class="login-page" hidden>
   <div class="login-panel">
-    <img class="login-logo" src="assets/light-the-world-logo-white.png" alt="Light the World">
+    <img class="login-logo" src="/assets/light-the-world-logo-white.png" alt="Light the World">
     <div class="eyebrow">Giving Machine</div>
     <h1>Volunteer Roster</h1>
     <p class="login-sub">Admin login</p>
@@ -187,7 +185,6 @@ body.signup-only #tab-signup .card{max-width:640px}
       <p class="login-err" id="loginErr" role="alert"></p>
       <button type="submit">Log in</button>
     </form>
-    <a class="login-back" href="#signup">&larr; Back to volunteer sign-up</a>
   </div>
 </div>
 
@@ -200,6 +197,7 @@ body.signup-only #tab-signup .card{max-width:640px}
     <button data-tab="tracking">Assignments</button>
     <button data-tab="signup">Sign-up</button>
     <button data-tab="data">Data</button>
+    <button data-tab="admins">Admins</button>
   </nav>
 
   <!-- DASHBOARD -->
@@ -326,6 +324,49 @@ body.signup-only #tab-signup .card{max-width:640px}
         <h2>Thank you!</h2>
         <p class="muted">Your availability was received. We'll be in touch with your shift assignment.</p>
         <button onclick="resetSignup()">Submit another</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ADMINS -->
+  <section class="tab" id="tab-admins">
+    <div id="adminsUnavailable" class="warn" hidden></div>
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <h2 style="margin:0">Admin accounts</h2>
+        <span class="spacer"></span>
+        <button class="sm noprint" onclick="loadAdmins(true)">Refresh</button>
+      </div>
+      <div class="tablewrap"><table id="adminTable"><tr><td class="muted">Loading…</td></tr></table></div>
+    </div>
+    <div class="grid2 noprint" style="align-items:start">
+      <div class="card">
+        <h2>Add an admin</h2>
+        <p class="muted" style="margin-top:-4px">They can log in right away at the admin link: <a href="#" id="adminLinkText" onclick="copySignupLink('admin');return false" title="Click to copy"></a>. Share the password privately; they can change it under "Change my password."</p>
+        <form id="addAdminForm" autocomplete="off">
+          <label class="f" for="newAdminEmail">Email</label>
+          <input id="newAdminEmail" type="email" required style="margin-bottom:10px">
+          <label class="f" for="newAdminPw">Password <span class="muted">(at least 8 characters)</span></label>
+          <input id="newAdminPw" type="password" minlength="8" autocomplete="new-password" required style="margin-bottom:10px">
+          <label class="f" for="newAdminPw2">Confirm password</label>
+          <input id="newAdminPw2" type="password" minlength="8" autocomplete="new-password" required>
+          <p class="login-msg" id="addAdminMsg"></p>
+          <button class="primary" type="submit">Add admin</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Change my password</h2>
+        <p class="muted" style="margin-top:-4px">Signed in as <b id="pwWho"></b>.</p>
+        <form id="pwForm" autocomplete="off">
+          <label class="f" for="curPw">Current password</label>
+          <input id="curPw" type="password" autocomplete="current-password" required style="margin-bottom:10px">
+          <label class="f" for="nextPw">New password <span class="muted">(at least 8 characters)</span></label>
+          <input id="nextPw" type="password" minlength="8" autocomplete="new-password" required style="margin-bottom:10px">
+          <label class="f" for="nextPw2">Confirm new password</label>
+          <input id="nextPw2" type="password" minlength="8" autocomplete="new-password" required>
+          <p class="login-msg" id="pwMsg"></p>
+          <button class="primary" type="submit">Change password</button>
+        </form>
       </div>
     </div>
   </section>
@@ -698,6 +739,7 @@ $("#autoBtn").onclick = () => {
 
 /* ---------- tabs ---------- */
 function showTab(name){
+  if (name === "admins") setTimeout(() => loadAdmins(), 0);
   document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("section.tab").forEach(s => s.classList.toggle("active", s.id === "tab-" + name));
 }
@@ -742,8 +784,8 @@ function syncMusicField(){ $("#suMusicWrap").hidden = ![...suForm.querySelectorA
 $("#suSlots").addEventListener("change", syncMusicField);
 function resetSignup(){ suForm.reset(); syncMusicField(); setSignupMode(signupMode); $("#signupWrap").hidden = false; $("#thanks").hidden = true; }
 function copySignupLink(hash){
-  const url = location.href.split("#")[0] + "#" + hash;
-  const label = hash === "ward-signup" ? "Ward member link" : "General sign-up link";
+  const url = hash === "admin" ? siteRoot() + "admin" : siteRoot() + "#" + hash;
+  const label = hash === "admin" ? "Admin login link" : hash === "ward-signup" ? "Ward member link" : "General sign-up link";
   navigator.clipboard?.writeText(url).then(() => toast(`${label} copied`), () => prompt("Copy this link:", url));
 }
 
@@ -1005,10 +1047,12 @@ async function pbkdf2(text, saltHex){
   return hex(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: fromHex(saltHex), iterations: CONFIG.pbkdf2Iterations }, key, 256));
 }
 function currentAdmin(){ try { return sessionStorage.getItem(SESSION_KEY); } catch(e){ return null; } }
+const isAdminPath = () => /\/admin\/?$/.test(location.pathname) || location.hash === "#login";
+const siteRoot = () => location.origin + location.pathname.replace(/admin\/?$/, "").replace(/index\.html$/, "");
 function applyAccess(){
   const who = currentAdmin(), signupLink = location.hash === "#signup" || location.hash === "#ward-signup";
   if (location.hash === "#login" && who) history.replaceState(null, "", location.pathname + location.search);
-  const wantsLogin = location.hash === "#login" && !who, wasOpen = !$("#loginPage").hidden;
+  const wantsLogin = isAdminPath() && !who && !signupLink, wasOpen = !$("#loginPage").hidden;
   $("#loginPage").hidden = !wantsLogin;
   document.body.classList.toggle("login-mode", wantsLogin);
   if (wantsLogin && !wasOpen){ $("#loginErr").textContent = ""; $("#loginForm").reset(); setTimeout(() => $("#loginEmail").focus(), 0); }
@@ -1018,7 +1062,7 @@ function applyAccess(){
   if (!who || signupLink) showTab("signup");
   else if (document.querySelector("nav.tabs button.active")?.dataset.tab === "signup") showTab("dashboard");
 }
-function openLogin(){ location.hash = "#login"; }
+function openLogin(){ location.href = siteRoot() + "admin"; }
 let failedTries = 0;
 $("#loginForm").addEventListener("submit", async e => {
   e.preventDefault();
@@ -1026,21 +1070,26 @@ $("#loginForm").addEventListener("submit", async e => {
   const btn = e.target.querySelector("button[type=submit]");
   btn.disabled = true; $("#loginErr").textContent = "Checking…";
   if (failedTries >= 3) await new Promise(r => setTimeout(r, 1500 * (failedTries - 2)));
-  const admin = CONFIG.admins.find(a => a.email.toLowerCase() === email);
-  let ok = false;
-  try {
-    // Always run the hash, even for unknown emails, so timing doesn't reveal which emails are admins
-    const h = await pbkdf2(email + ":" + pw, admin ? admin.salt : CONFIG.admins[0].salt);
-    ok = !!admin && h === admin.hash;
-  } catch(err){
-    $("#loginErr").textContent = "Login needs a secure (https) page. It works on the Netlify site.";
-    btn.disabled = false; return;
+  // The server is the source of truth (it knows admins added in the app). If it can't be reached,
+  // fall back to the built-in admin list in CONFIG so the roster still opens.
+  const server = await serverLogin(email, pw);
+  let ok = server === "ok";
+  if (server === "unavailable"){
+    const admin = CONFIG.admins.find(a => a.email.toLowerCase() === email);
+    try {
+      // Always run the hash, even for unknown emails, so timing doesn't reveal which emails are admins
+      const h = await pbkdf2(email + ":" + pw, admin ? admin.salt : CONFIG.admins[0].salt);
+      ok = !!admin && h === admin.hash;
+    } catch(err){
+      $("#loginErr").textContent = "Login needs a secure (https) page. It works on the Netlify site.";
+      btn.disabled = false; return;
+    }
   }
   btn.disabled = false;
   if (!ok){ failedTries++; $("#loginErr").textContent = "Incorrect email or password."; $("#loginPw").value = ""; return; }
   failedTries = 0;
-  try { sessionStorage.setItem(SESSION_KEY, admin.email); } catch(err){}
-  await getSyncToken(email, pw);
+  const admin = { email };
+  try { sessionStorage.setItem(SESSION_KEY, email); } catch(err){}
   if (["#signup", "#ward-signup", "#login"].includes(location.hash)) history.replaceState(null, "", location.pathname + location.search);
   applyAccess(); showTab("dashboard"); toast(`Welcome, ${admin.email}`);
   syncSignups();
@@ -1065,19 +1114,20 @@ function setSyncStatus(text, isError, detail){
 const SYNC_PROBLEMS = {
   404: ["Auto-sync off: sync function not deployed", "The site was deployed without netlify/functions/signups.mjs. Deploy the whole folder with GitHub or the Netlify CLI (drag-and-drop skips functions)."],
   503: ["Auto-sync off: access token not set", "Add NETLIFY_API_TOKEN under Site configuration > Environment variables, then trigger a new deploy."],
-  401: ["Auto-sync off: server rejected the login", "The admin password in netlify/functions/signups.mjs doesn't match index.html. Redeploy both files together."],
   0:   ["Auto-sync off: couldn't reach the server", "Check your connection, then log out and back in."]
 };
 function syncProblem(){ try { return JSON.parse(sessionStorage.getItem(SYNC_ERR_KEY)); } catch(e){ return null; } }
-async function getSyncToken(email, password){
+/* Returns "ok" (logged in on the server), "denied" (wrong email/password) or "unavailable" (server can't check). */
+async function serverLogin(email, password){
   try {
     const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
     const j = await r.json().catch(() => ({}));
-    if (r.ok && j.token){ sessionStorage.setItem(SYNC_KEY, j.token); sessionStorage.removeItem(SYNC_ERR_KEY); return true; }
+    if (r.ok && j.token){ sessionStorage.setItem(SYNC_KEY, j.token); sessionStorage.removeItem(SYNC_ERR_KEY); return "ok"; }
+    if (r.status === 401) return "denied";
     const p = SYNC_PROBLEMS[r.status] || [`Auto-sync off: server error ${r.status}`, j.error || "Check the function log in Netlify (Logs > Functions)."];
     sessionStorage.setItem(SYNC_ERR_KEY, JSON.stringify(p));
   } catch(err){ try { sessionStorage.setItem(SYNC_ERR_KEY, JSON.stringify(SYNC_PROBLEMS[0])); } catch(e){} }
-  return false;
+  return "unavailable";
 }
 async function syncSignups(manual){
   if (!currentAdmin() || syncing) return;
@@ -1115,6 +1165,68 @@ async function syncSignups(manual){
 setInterval(() => { if (document.visibilityState === "visible") syncSignups(); }, SYNC_EVERY_MS);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && (!lastSync || Date.now() - lastSync > SYNC_EVERY_MS)) syncSignups();
+});
+
+/* ---------- admin accounts (Netlify Function at /api/admins, /api/password) ---------- */
+async function adminApi(method, path, body){
+  const token = syncToken();
+  if (!token) throw Object.assign(new Error("no-token"), { status: 0 });
+  const r = await fetch(path, { method, headers: { Authorization: "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && path !== "/api/password"){ sessionStorage.removeItem(SYNC_KEY); throw Object.assign(new Error("Your session expired. Log out and back in."), { status: 401 }); }
+  if (!r.ok) throw Object.assign(new Error(j.error || `Server error ${r.status}`), { status: r.status });
+  return j;
+}
+function setMsg(el, text, kind){ el.textContent = text; el.className = "login-msg" + (kind ? " " + kind : ""); }
+const fmtDate = iso => iso ? new Date(iso).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : "";
+async function loadAdmins(manual){
+  $("#pwWho").textContent = currentAdmin() || "";
+  $("#adminLinkText").textContent = siteRoot() + "admin";
+  const warn = $("#adminsUnavailable");
+  try {
+    const { admins, me } = await adminApi("GET", "/api/admins");
+    warn.hidden = true;
+    $("#adminTable").innerHTML = `<thead><tr><th>Email</th><th>Account</th><th class="noprint"></th></tr></thead><tbody>` +
+      admins.map(a => `<tr>
+        <td><b>${esc(a.email)}</b>${a.email === me ? ` <span class="pill s-full">You</span>` : ""}</td>
+        <td class="muted">${a.builtIn ? "Built-in" : `Added${a.addedBy ? " by " + esc(a.addedBy) : ""}${a.addedAt ? " on " + esc(fmtDate(a.addedAt)) : ""}`}</td>
+        <td class="noprint" style="text-align:right">${!a.builtIn && a.email !== me ? `<button class="sm danger" data-rm-admin="${esc(a.email)}">Remove</button>` : ""}</td>
+      </tr>`).join("") + "</tbody>";
+    if (manual) toast("Admin list refreshed");
+  } catch(err){
+    const [msg, detail] = err.status === 0 ? (syncProblem() || ["Server not connected", "Log out and back in."]) : [err.message, ""];
+    warn.innerHTML = `<b>Admin accounts can't be managed right now.</b> ${esc(msg.replace(/^Auto-sync off: /, ""))}. ${esc(detail)}`;
+    warn.hidden = false;
+    $("#adminTable").innerHTML = `<tr><td class="muted">Unavailable until the server connection is working.</td></tr>`;
+  }
+}
+$("#adminTable").addEventListener("click", async e => {
+  const email = e.target.dataset.rmAdmin; if (!email) return;
+  if (!confirm(`Remove ${email} as an admin? They'll be signed out and won't be able to log in.`)) return;
+  try { await adminApi("DELETE", "/api/admins?email=" + encodeURIComponent(email)); toast(`${email} removed`); loadAdmins(); }
+  catch(err){ toast(err.message); }
+});
+$("#addAdminForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const msg = $("#addAdminMsg"), email = $("#newAdminEmail").value.trim().toLowerCase(), pw = $("#newAdminPw").value;
+  if (pw !== $("#newAdminPw2").value) return setMsg(msg, "The passwords don't match.", "err");
+  const btn = e.target.querySelector("button"); btn.disabled = true; setMsg(msg, "Adding…");
+  try {
+    await adminApi("POST", "/api/admins", { email, password: pw });
+    e.target.reset(); setMsg(msg, `${email} can now log in.`, "ok"); loadAdmins();
+  } catch(err){ setMsg(msg, err.status === 0 ? "The server isn't connected, so admins can't be added right now." : err.message, "err"); }
+  finally { btn.disabled = false; }
+});
+$("#pwForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const msg = $("#pwMsg"), next = $("#nextPw").value;
+  if (next !== $("#nextPw2").value) return setMsg(msg, "The new passwords don't match.", "err");
+  const btn = e.target.querySelector("button"); btn.disabled = true; setMsg(msg, "Saving…");
+  try {
+    await adminApi("POST", "/api/password", { currentPassword: $("#curPw").value, newPassword: next });
+    e.target.reset(); setMsg(msg, "Password changed. Use it next time you log in.", "ok");
+  } catch(err){ setMsg(msg, err.status === 0 ? "The server isn't connected, so passwords can't be changed right now." : err.message, "err"); }
+  finally { btn.disabled = false; }
 });
 
 applyAccess();

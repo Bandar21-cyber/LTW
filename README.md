@@ -3,9 +3,10 @@
 This folder is the whole site:
 
 - `index.html`: the roster, sign-up forms and admin tools
-- `netlify/functions/signups.mjs`: server code that lets admins log in and pulls sign-ups from Netlify Forms
+- `netlify/functions/signups.mjs`: server code for admin login, admin accounts and pulling sign-ups from Netlify Forms
+- `package.json`: tells Netlify to install `@netlify/blobs`, where admin accounts added in the app are stored
 - `assets/`: the Light the World logo (header and login) and the Giving Machine photo (sign-up form)
-- `netlify.toml`: tells Netlify where the site and function are
+- `netlify.toml`: tells Netlify where the site and function are, to use Node 22, and to serve the admin login at `/admin`
 
 Sign-ups sync into the roster automatically every minute while an admin is logged in.
 
@@ -20,8 +21,13 @@ Sign-ups sync into the roster automatically every minute while an admin is logge
 5. **Redeploy** so the token and form are picked up (Deploys > Trigger deploy).
 6. Submit a test sign-up, log in as an admin, and click **Sync now**. The test person should appear.
 
-## Changing admins or passwords
+## Admin accounts
 
-Admin password hashes live in two places that must match: `CONFIG.admins` in `index.html` and `ADMINS` in `netlify/functions/signups.mjs`.
+Admins log in at `https://<your-site>.netlify.app/admin`. The public pages (`/`, `/#signup`, `/#ward-signup`) have no admin button.
+
+
+Any admin can add or remove admins, and change their own password, on the **Admins** tab. These accounts are stored in Netlify Blobs and take effect immediately, with no redeploy.
+
+The three built-in admins are listed in both `CONFIG.admins` in `index.html` and `BUILT_IN_ADMINS` in `netlify/functions/signups.mjs`. They can't be removed in the app. If the server can't be reached, only the built-in admins can log in, using their original passwords.
 
 Keep the access token private. It is only ever read on the server.
