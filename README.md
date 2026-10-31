@@ -3,12 +3,12 @@
 This folder is the whole site:
 
 - `index.html`: the roster, sign-up forms and admin tools
-- `netlify/functions/signups.mjs`: server code for admin login, admin accounts and pulling sign-ups from Netlify Forms
-- `package.json`: tells Netlify to install `@netlify/blobs`, where admin accounts added in the app are stored
+- `netlify/functions/signups.mjs`: server code for admin login, admin accounts, the shared roster, and pulling sign-ups from Netlify Forms
+- `package.json`: tells Netlify to install `@netlify/blobs`, where admin accounts and the shared roster are stored
 - `assets/`: the Light the World logo (header and login) and the Giving Machine photo (sign-up form)
 - `netlify.toml`: tells Netlify where the site and function are, to use Node 22, and to serve the admin login at `/admin`
 
-Sign-ups sync into the roster automatically every minute while an admin is logged in.
+The roster (volunteers, assignments and shift sizes) is stored on the server in Netlify Blobs and shared by all admins. Changes save automatically; other admins' changes appear within a minute. Sign-ups sync into the roster automatically every minute while an admin is logged in.
 
 ## One-time setup
 

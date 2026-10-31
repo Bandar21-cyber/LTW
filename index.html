@@ -161,6 +161,7 @@ body.signup-only #tab-signup .card{max-width:640px}
     <span class="spacer"></span>
       <div class="row noprint admin-only">
         <span class="status" id="whoami"></span>
+        <span class="status" id="rosterStatus"></span>
         <span class="status" id="syncStatus"></span>
         <button onclick="syncSignups(true)">Sync now</button>
         <button onclick="window.print()">Print</button>
@@ -240,6 +241,7 @@ body.signup-only #tab-signup .card{max-width:640px}
           <div><label class="f">Phone</label><input name="phone" type="tel"></div>
           <div><label class="f">Email</label><input name="email" type="email"></div>
           <div><label class="f">Ward</label><select name="ward" id="vWard"></select></div>
+          <div><label class="f">Date of birth</label><input name="dob" type="date" min="1900-01-01"></div>
         </div>
         <h3>Available dates</h3><div class="checks" id="vDates"></div>
         <h3>Available time slots</h3><div class="checks" id="vSlots"></div>
@@ -308,13 +310,15 @@ body.signup-only #tab-signup .card{max-width:640px}
           <div class="grid2" style="margin-top:12px">
             <div><label class="f">Phone *</label><input name="phone" type="tel" required></div>
             <div><label class="f">Email *</label><input name="email" type="email" required></div>
+            <div><label class="f" for="suDob">Date of birth *</label><input id="suDob" name="date_of_birth" type="date" required min="1900-01-01" autocomplete="bday"></div>
+            <div class="muted" style="font-size:.85rem;align-self:end;padding-bottom:9px" id="suDobNote"></div>
           </div>
           <h3>Which dates can you help? *</h3><div class="checks" id="suDates"></div>
           <h3>Which times work? *</h3><div class="checks" id="suSlots"></div>
-          <p class="muted" style="font-size:.9rem;margin:8px 0 0">🎵 Musical Performance (6:00–8:00 PM) is for volunteers sharing a musical gift, such as singing or playing an instrument. Anyone can choose the regular 6:00–8:00 PM shift.</p>
+          <p class="muted" style="font-size:.9rem;margin:8px 0 0">🎵 Musical Performance (6:00–8:00 PM) is for volunteers sharing a musical gift, such as singing or playing an instrument. Anyone can choose the regular 6:00–8:00 PM shift. Musical instruments need to either have their own power supply or be able to perform without power.</p>
           <div id="suMusicWrap" hidden>
             <h3>What musical gift will you share? *</h3>
-            <textarea name="musical_gift" rows="2" placeholder="e.g. piano, violin, choir/vocals, guitar. Include anything you'll need (outlet, piano, mic)."></textarea>
+            <textarea name="musical_gift" rows="2" placeholder="e.g. violin, choir/vocals, acoustic guitar, battery keyboard. Mention anything else you'll need."></textarea>
           </div>
           <h3>Notes / special skills</h3><textarea name="notes" rows="3"></textarea>
           <p id="suMsg" class="muted"></p>
@@ -401,7 +405,7 @@ body.signup-only #tab-signup .card{max-width:640px}
     </div>
     <div class="card">
       <h2>Reset</h2>
-      <p class="muted" style="margin-top:-4px">Data is saved in this browser only. Back up regularly, and use the JSON backup to move the roster to another computer.</p>
+      <p class="muted" style="margin-top:-4px">The roster is saved on the server and shared by all admins; changes save automatically. "Clear everything" and "Load sample data" change the shared roster for everyone. Download a JSON backup now and then as a safety copy.</p>
       <div class="row">
         <button onclick="loadSample()">Load sample data</button>
         <button class="danger" onclick="clearAll()">Clear everything</button>
@@ -439,6 +443,9 @@ const CONFIG = {
   wards: ["Daniels 1st Ward", "Daniels 2nd Ward", "Daniels 3rd Ward", "Daniels Canyon Ward",
           "Heber 8th Ward", "Heber 12th Ward", "Heber 14th Ward", "Heber 18th Ward", "Wheeler Park Ward"],
   storageKey: "volunteer-roster-v1",
+  minAge: 16,                    // volunteers must be at least this old...
+  ageAsOf: "2026-12-01",         // ...on this date (the first event day)
+  ageAsOfLabel: "December 1, 2026",
   /* Admin accounts. Only salted PBKDF2-SHA256 hashes are stored; the passwords themselves are not in this file.
      To add or change an admin, generate a new salt + hash of "<email lowercase>:<password>" (310,000 iterations). */
   admins: [
@@ -474,7 +481,10 @@ function load(){
   try { const s = JSON.parse(localStorage.getItem(CONFIG.storageKey)); if (s && s.volunteers) return s; } catch(e){}
   return sampleState();
 }
-function save(){ try { localStorage.setItem(CONFIG.storageKey, JSON.stringify(state)); } catch(e){} }
+function save(){
+  try { localStorage.setItem(CONFIG.storageKey, JSON.stringify(state)); } catch(e){}
+  if (typeof scheduleRosterPush === "function") scheduleRosterPush();
+}
 
 function sampleState(){
   const v = (name, phone, email, dates, slots, pref, notes="") => ({ id: uid(), name, phone, email, dates, slots, notes });
@@ -505,7 +515,17 @@ const inSlot = (d, s) => state.assignments.filter(a => a.date === d && a.slot ==
 const shiftsOf = vid => state.assignments.filter(a => a.vid === vid);
 const vById = id => state.volunteers.find(v => v.id === id);
 // Music slots also require the volunteer to have listed a musical gift
-const avail = (v, d, s) => v.dates.includes(d) && v.slots.includes(s) && (!isMusicSlot(s) || !!(v.music || "").trim());
+/* Age in whole years on a given date; null if the birth date is missing or invalid. */
+function ageOn(dob, asOf = CONFIG.ageAsOf){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dob || "").trim()); if (!m) return null;
+  const [y, mo, d] = [+m[1], +m[2], +m[3]], [ay, am, ad] = asOf.split("-").map(Number);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1900) return null;
+  return ay - y - ((am < mo || (am === mo && ad < d)) ? 1 : 0);
+}
+const isUnderAge = v => { const a = ageOn(v.dob); return a !== null && a < CONFIG.minAge; };
+const latestAllowedDob = () => { const [y, m, d] = CONFIG.ageAsOf.split("-"); return `${+y - CONFIG.minAge}-${m}-${d}`; };
+const fmtDob = dob => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob || ""); return m ? `${+m[2]}/${+m[3]}/${m[1]}` : ""; };
+const avail = (v, d, s) => !isUnderAge(v) && v.dates.includes(d) && v.slots.includes(s) && (!isMusicSlot(s) || !!(v.music || "").trim());
 function status(d, s){
   const n = inSlot(d, s).length, m = need(d, s);
   return n > m ? "over" : n === m ? "full" : n === 0 ? "empty" : "under";
@@ -530,10 +550,13 @@ function conflicts(){
   const out = [];
   state.assignments.forEach(a => {
     const v = vById(a.vid);
-    if (v && !avail(v, a.date, a.slot)) out.push(isMusicSlot(a.slot) && !(v.music || "").trim() && v.dates.includes(a.date) && v.slots.includes(a.slot)
+    if (v && isUnderAge(v)) out.push(`${v.name} is assigned ${a.date}, ${slotLabel(a.slot)} but will be under ${CONFIG.minAge} on ${CONFIG.ageAsOfLabel}.`);
+    else if (v && !avail(v, a.date, a.slot)) out.push(isMusicSlot(a.slot) && !(v.music || "").trim() && v.dates.includes(a.date) && v.slots.includes(a.slot)
       ? `${v.name} is assigned ${a.date}, ${slotLabel(a.slot)} but hasn't listed a musical gift.`
       : `${v.name} is assigned ${a.date}, ${slotLabel(a.slot)} but isn't available then.`);
   });
+  state.volunteers.filter(v => isUnderAge(v) && !shiftsOf(v.id).length)
+    .forEach(v => out.push(`${v.name} signed up but will be under ${CONFIG.minAge} on ${CONFIG.ageAsOfLabel} (born ${fmtDob(v.dob)}).`));
   eachShift((d, s) => {
     const n = inSlot(d, s).length, m = need(d, s);
     if (n > m) out.push(`${d}, ${slotLabel(s)} is overbooked: ${n} assigned, ${m} needed.`);
@@ -558,6 +581,10 @@ function autoAssign(){
 }
 
 /* ---------- rendering ---------- */
+function renderView(){
+  renderDashboard(); renderMatrix(); renderVolunteers(); renderTracking();
+  if (slotDlg.open) renderSlotDialog();
+}
 function renderAll(){
   save();
   renderDashboard(); renderMatrix(); renderVolunteers(); renderTracking();
@@ -627,7 +654,7 @@ function renderVolunteers(){
   $("#vCount").textContent = list.length === state.volunteers.length ? `(${state.volunteers.length})` : `(${list.length} of ${state.volunteers.length})`;
   $("#vTable").innerHTML = `<thead><tr><th>Name</th><th>Ward</th><th>Contact</th><th>Dates</th><th>Times</th><th class="c">Shifts</th><th class="noprint"></th></tr></thead><tbody>` +
     (list.map(v => `<tr>
-      <td><b>${esc(v.name)}</b>${v.music ? `<br><small>🎵 ${esc(v.music)}</small>` : ""}${v.notes ? `<br><small class="muted">${esc(v.notes)}</small>` : ""}</td>
+      <td><b>${esc(v.name)}</b>${isUnderAge(v) ? ` <span class="pill s-empty">Under ${CONFIG.minAge}</span>` : ""}${v.music ? `<br><small>🎵 ${esc(v.music)}</small>` : ""}${v.notes ? `<br><small class="muted">${esc(v.notes)}</small>` : ""}</td>
       <td>${v.ward ? esc(v.ward) : `<span class="muted">—</span>`}</td>
       <td>${esc(v.phone)}<br><small class="muted">${esc(v.email)}</small></td>
       <td>${v.dates.map(d => `<span class="tag">${esc(d)}</span>`).join("")}</td>
@@ -695,7 +722,7 @@ function checkboxes(el, items, cls, getVal = x => x, getLabel = x => x){
 }
 function fillForm(v){
   vForm.name.value = v?.name || ""; vForm.phone.value = v?.phone || ""; vForm.email.value = v?.email || "";
-  vForm.notes.value = v?.notes || ""; vForm.music.value = v?.music || ""; vForm.ward.value = v?.ward || "";
+  vForm.notes.value = v?.notes || ""; vForm.music.value = v?.music || ""; vForm.ward.value = v?.ward || ""; vForm.dob.value = v?.dob || "";
   vForm.querySelectorAll(".v-date").forEach(c => c.checked = !!v?.dates.includes(c.value));
   vForm.querySelectorAll(".v-slot").forEach(c => c.checked = !!v?.slots.includes(c.value));
   $("#vFormTitle").textContent = v ? `Edit ${v.name}` : "Add volunteer";
@@ -706,7 +733,7 @@ vForm.addEventListener("submit", e => {
   e.preventDefault();
   const data = {
     name: vForm.name.value.trim(), phone: vForm.phone.value.trim(), email: vForm.email.value.trim(),
-    notes: vForm.notes.value.trim(), music: vForm.music.value.trim(), ward: vForm.ward.value,
+    notes: vForm.notes.value.trim(), music: vForm.music.value.trim(), ward: vForm.ward.value, dob: vForm.dob.value,
     dates: [...vForm.querySelectorAll(".v-date:checked")].map(c => c.value),
     slots: [...vForm.querySelectorAll(".v-slot:checked")].map(c => c.value)
   };
@@ -776,6 +803,10 @@ suForm.addEventListener("submit", async e => {
   if (!first || !last){ msg.textContent = "Please enter your first and last name."; (first ? suForm.elements.last_name : suForm.elements.first_name).focus(); return; }
   suForm.elements.name.value = `${first} ${last}`;
   if (!dates.length || !times.length){ msg.textContent = "Please choose at least one date and one time."; return; }
+  const dobEl = suForm.elements.date_of_birth, age = ageOn(dobEl.value);
+  if (age === null){ msg.textContent = "Please enter your date of birth."; dobEl.focus(); return; }
+  if (age < CONFIG.minAge){ msg.textContent = `Sorry, volunteers must be at least ${CONFIG.minAge} years old by ${CONFIG.ageAsOfLabel}.`; dobEl.focus(); return; }
+  if (age > 120){ msg.textContent = "Please check your date of birth."; dobEl.focus(); return; }
   const giftEl = suForm.elements.musical_gift;
   if (times.some(isMusicSlot)){
     if (!giftEl.value.trim()){ msg.textContent = "Musical Performance is for volunteers sharing a musical gift. Please describe the musical gift you'll share, or uncheck Musical Performance."; giftEl.focus(); return; }
@@ -828,8 +859,8 @@ function download(name, text, type = "text/csv"){
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 function exportContacts(){
-  download("volunteer-contacts.csv", toCSV([["Name","Ward","Phone","Email","Available dates","Available times","Musical gift","Notes","Total shifts","Assigned shifts"],
-    ...state.volunteers.map(v => [v.name, v.ward || "", v.phone, v.email, v.dates.join("; "), v.slots.map(slotShort).join("; "), v.music, v.notes,
+  download("volunteer-contacts.csv", toCSV([["Name","Ward","Phone","Email","Available dates","Available times","Musical gift","Date of birth","Notes","Total shifts","Assigned shifts"],
+    ...state.volunteers.map(v => [v.name, v.ward || "", v.phone, v.email, v.dates.join("; "), v.slots.map(slotShort).join("; "), v.music, fmtDob(v.dob), v.notes,
       shiftsOf(v.id).length, shiftsOf(v.id).map(a => `${a.date} ${slotShort(a.slot)}`).join("; ")])]));
 }
 function exportSchedule(){
@@ -882,10 +913,10 @@ function exportExcel(){
   addSheet("Shift Detail", det, [10, 22, 24, 22, 14, 28, 30]);
 
   // 5. Volunteer directory
-  const vol = [["Name", "Ward", "Phone", "Email", "Available Dates", "Available Times", "Musical Gift", "Notes / Skills", "Total Shifts"]];
+  const vol = [["Name", "Ward", "Phone", "Email", "Available Dates", "Available Times", "Musical Gift", "Date of Birth", "Notes / Skills", "Total Shifts"]];
   [...state.volunteers].sort((a, b) => a.name.localeCompare(b.name))
-    .forEach(v => vol.push([v.name, v.ward || "", v.phone, v.email, v.dates.join(", "), v.slots.map(slotShort).join(", "), v.music || "", v.notes, shiftsOf(v.id).length]));
-  addSheet("Volunteers", vol, [24, 22, 14, 28, 26, 26, 30, 34, 12]);
+    .forEach(v => vol.push([v.name, v.ward || "", v.phone, v.email, v.dates.join(", "), v.slots.map(slotShort).join(", "), v.music || "", fmtDob(v.dob), v.notes, shiftsOf(v.id).length]));
+  addSheet("Volunteers", vol, [24, 22, 14, 28, 26, 26, 30, 14, 34, 12]);
 
   // Volunteers by ward
   const byWard = [["Ward", "Volunteers", "Assigned Shifts"]];
@@ -992,7 +1023,7 @@ function upsertSignup(f){
   const norm = x => x.replace(/\s+/g, "").toLowerCase();
   const wardRaw = str("ward");
   const data = {
-    name, phone: str("phone"), email: str("email"), notes: str("notes"), music: str("musical_gift"),
+    name, phone: str("phone"), email: str("email"), notes: str("notes"), music: str("musical_gift"), dob: str("date_of_birth"),
     ward: CONFIG.wards.find(x => x.toLowerCase() === wardRaw.toLowerCase()) || wardRaw,
     dates: str("available_dates").split(/[;,]/).map(x => x.trim()).filter(x => CONFIG.dates.includes(x)),
     slots: str("available_times").split(/[;,]/).map(norm).filter(x => CONFIG.slots.some(s => s.id === x))
@@ -1003,9 +1034,11 @@ function upsertSignup(f){
   const ex = state.volunteers.find(v => (data.email && (v.email || "").toLowerCase() === data.email.toLowerCase()) || (!data.email && v.name === name));
   if (ex){
     if (!data.ward && ex.ward) delete data.ward;   // a later general sign-up doesn't erase a known ward
+    if (!data.dob && ex.dob) delete data.dob;
     Object.assign(ex, data); return "updated";
   }
-  state.volunteers.push({ id: uid(), ...data }); return "added";
+  const id = data.email ? "e:" + data.email.toLowerCase() : uid();
+  state.volunteers.push({ id: state.volunteers.some(v => v.id === id) ? uid() : id, ...data }); return "added";
 }
 
 $("#importCsv").addEventListener("change", async e => {
@@ -1018,7 +1051,7 @@ $("#importCsv").addEventListener("change", async e => {
   rows.slice(1).forEach(r => {
     const res = upsertSignup({
       name: col(r, "name", "full_name"), first_name: col(r, "first_name"), last_name: col(r, "last_name"), phone: col(r, "phone"), email: col(r, "email"), notes: col(r, "notes"),
-      musical_gift: col(r, "musical_gift", "music"), ward: col(r, "ward"),
+      musical_gift: col(r, "musical_gift", "music"), ward: col(r, "ward"), date_of_birth: col(r, "date_of_birth", "dob"),
       available_dates: col(r, "available_dates"), available_times: col(r, "available_times")
     });
     if (res === "added") added++; else if (res === "updated") updated++;
@@ -1036,9 +1069,9 @@ $("#importJson").addEventListener("change", async e => {
     renderAll(); toast("Backup restored");
   } catch(err){ toast("That isn't a valid roster backup"); }
 });
-function loadSample(){ if (confirm("Replace current data with sample volunteers?")){ state = sampleState(); state.syncedIds = []; renderAll(); } }
+function loadSample(){ if (confirm("Replace the shared roster with sample volunteers? This affects every admin.")){ state = sampleState(); state.syncedIds = []; renderAll(); } }
 function clearAll(){
-  if (!confirm("Delete all volunteers and assignments? Download a backup first if you need one. Sign-ups from Netlify will sync back in.")) return;
+  if (!confirm("Delete all volunteers and assignments from the shared roster? This affects every admin. Download a backup first if you need one. Sign-ups from Netlify will sync back in.")) return;
   state = { volunteers: [], assignments: [], needed: {}, syncedIds: [], schemaVersion: 2 }; renderAll(); syncSignups();
 }
 
@@ -1049,6 +1082,12 @@ function toast(m){ const t = $("#toast"); t.textContent = m; t.classList.add("sh
 $("#eventName").textContent = CONFIG.eventName;
 $("#eventSub").textContent = CONFIG.eventSub;
 document.title = CONFIG.eventName;
+$("#suDob").max = latestAllowedDob();
+$("#suDobNote").textContent = `Volunteers must be at least ${CONFIG.minAge} by ${CONFIG.ageAsOfLabel}.`;
+$("#suDob").addEventListener("input", e => {
+  const age = ageOn(e.target.value);
+  e.target.setCustomValidity(age !== null && age < CONFIG.minAge ? `Volunteers must be at least ${CONFIG.minAge} years old by ${CONFIG.ageAsOfLabel}.` : "");
+});
 const wardOpts = CONFIG.wards.map(w => `<option>${esc(w)}</option>`).join("");
 $("#suWard").innerHTML = `<option value="">Select your ward…</option>${wardOpts}`;
 $("#vWard").innerHTML = `<option value="">Not a ward member</option>${wardOpts}`;
@@ -1115,7 +1154,7 @@ $("#loginForm").addEventListener("submit", async e => {
 });
 function logout(){
   try { sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SYNC_KEY); sessionStorage.removeItem(SYNC_ERR_KEY); } catch(e){}
-  setSyncStatus("");
+  setSyncStatus(""); setRosterStatus("");
   slotDlg.open && slotDlg.close();
   applyAccess(); toast("Logged out");
 }
@@ -1159,6 +1198,7 @@ async function syncSignups(manual){
   }
   syncing = true; setSyncStatus("Syncing sign-ups…");
   try {
+    await pullRoster();
     const r = await fetch("/api/signups", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
     const j = await r.json().catch(() => ({}));
     if (r.status === 401){ sessionStorage.removeItem(SYNC_KEY); setSyncStatus("Session expired: log out and back in to resume syncing", true); return; }
@@ -1181,6 +1221,144 @@ async function syncSignups(manual){
     if (manual) toast(err.message || "Sync failed");
   } finally { syncing = false; }
 }
+/* ---------- shared roster (Netlify Function at /api/roster) ----------
+   Every change is saved to the server, and other admins' changes are pulled in every minute.
+   If two admins save at nearly the same time, their changes are merged:
+   added/removed assignments and edited volunteers from both are kept. */
+const SHARED_KEY = CONFIG.storageKey + "-shared";
+const ROSTER_FIELDS = ["volunteers", "assignments", "needed", "syncedIds", "schemaVersion"];
+const snapshot = st => JSON.parse(JSON.stringify(Object.fromEntries(ROSTER_FIELDS.map(k => [k, st?.[k]]))));
+const sameRoster = (a, b) => JSON.stringify(snapshot(a)) === JSON.stringify(snapshot(b));
+let shared = (() => { try { return JSON.parse(localStorage.getItem(SHARED_KEY)) || {}; } catch(e){ return {}; } })();
+const saveShared = () => { try { localStorage.setItem(SHARED_KEY, JSON.stringify(shared)); } catch(e){} };
+let rosterBusy = false, rosterAgain = false, pushTimer = null, rosterOnline = false;
+
+function setRosterStatus(text, isError, detail){
+  const el = $("#rosterStatus"); if (!el) return;
+  el.textContent = text; el.classList.toggle("err", !!isError); el.title = detail || "";
+}
+const timeNow = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+function mergeRoster(base, local, remote){
+  const empty = { volunteers: [], assignments: [], needed: {}, syncedIds: [] };
+  base = snapshot(base || empty); local = snapshot(local); remote = snapshot(remote || empty);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const byId = arr => new Map((arr || []).map(v => [v.id, v]));
+  const B = byId(base.volunteers), L = byId(local.volunteers), R = byId(remote.volunteers);
+  const vols = new Map(R);
+  for (const [id, v] of L) if (!B.has(id) || !same(B.get(id), v)) vols.set(id, v);          // added or edited here
+  for (const [id, v] of B) if (!L.has(id) && same(v, R.get(id))) vols.delete(id);           // deleted here, untouched there
+  const key = a => `${a.vid}|${a.date}|${a.slot}`;
+  const bA = new Set((base.assignments || []).map(key)), lA = new Map((local.assignments || []).map(a => [key(a), a]));
+  const asg = new Map((remote.assignments || []).map(a => [key(a), a]));
+  for (const [k, a] of lA) if (!bA.has(k)) asg.set(k, a);                                    // assigned here
+  for (const k of bA) if (!lA.has(k)) asg.delete(k);                                         // unassigned here
+  const needed = { ...(remote.needed || {}) };
+  for (const k of new Set([...Object.keys(base.needed || {}), ...Object.keys(local.needed || {})])){
+    if ((base.needed || {})[k] !== (local.needed || {})[k]){
+      if (k in (local.needed || {})) needed[k] = local.needed[k]; else delete needed[k];
+    }
+  }
+  return {
+    volunteers: [...vols.values()],
+    assignments: [...asg.values()].filter(a => vols.has(a.vid)),
+    needed,
+    syncedIds: [...new Set([...(remote.syncedIds || []), ...(local.syncedIds || [])])],
+    schemaVersion: 2
+  };
+}
+function adoptRoster(data){
+  const keepEditing = editingId;
+  state = { ...snapshot(data), syncedIds: data.syncedIds || [], needed: data.needed || {} };
+  migrateMusicSlot(state);
+  if (keepEditing && !vById(keepEditing)){ editingId = null; fillForm(null); }
+}
+async function rosterFetch(method, body){
+  const token = syncToken();
+  if (!token) throw Object.assign(new Error("not-connected"), { status: 0 });
+  const r = await fetch("/api/roster", { method, cache: "no-store",
+    headers: { Authorization: "Bearer " + token, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401){ sessionStorage.removeItem(SYNC_KEY); throw Object.assign(new Error("Session expired: log out and back in"), { status: 401 }); }
+  return { r, j };
+}
+function rosterOffline(err){
+  rosterOnline = false;
+  if (err.status === 0 || err.status === 404) setRosterStatus("Roster saved in this browser only", true, "The server isn't connected, so changes are saved only in this browser. They'll be shared once the connection works and you log in again.");
+  else setRosterStatus(err.message || "Couldn't save the roster", true, "Changes are kept in this browser and will be saved when the connection returns.");
+}
+/* Get the shared roster and fold in anything this browser hasn't saved yet. */
+async function pullRoster(){
+  if (!currentAdmin() || rosterBusy) return;
+  rosterBusy = true;
+  try {
+    const { r, j } = await rosterFetch("GET");
+    if (!r.ok) throw Object.assign(new Error(j.error || `Server error ${r.status}`), { status: r.status });
+    rosterOnline = true;
+    if (j.data == null){
+      // Nobody has saved a shared roster yet: this browser's roster becomes the first one (sample data excluded)
+      const onlySample = state.volunteers.length && state.volunteers.every(v => /@example\.com$/i.test(v.email || ""));
+      if (onlySample) state = { volunteers: [], assignments: [], needed: {}, syncedIds: [], schemaVersion: 2 };
+      shared = { base: null, etag: null }; saveShared();
+    } else if (j.etag !== shared.etag){
+      const dirty = shared.base && !sameRoster(state, shared.base);
+      if (!shared.base){
+        // First time this browser connects: offer to add its own data to the shared roster
+        const onlySample = state.volunteers.every(v => /@example\.com$/i.test(v.email || ""));
+        const extra = state.assignments.filter(a => !(j.data.assignments || []).some(b => b.vid === a.vid && b.date === a.date && b.slot === a.slot)).length;
+        const wantsMerge = !onlySample && (state.volunteers.length || state.assignments.length) && !sameRoster(state, j.data) &&
+          confirm(`This browser has its own copy of the roster (${state.volunteers.length} volunteers, ${state.assignments.length} assignments, ${extra} not in the shared roster).\n\nOK: add this browser's volunteers and assignments to the shared roster.\nCancel: use the shared roster as it is.`);
+        state = wantsMerge ? mergeRoster(null, state, j.data) : (adoptRoster(j.data), state);
+      } else if (dirty) state = mergeRoster(shared.base, state, j.data);
+      else adoptRoster(j.data);
+      shared = { base: snapshot(j.data), etag: j.etag }; saveShared();
+      renderAll();
+    }
+    if (!shared.base || !sameRoster(state, shared.base)) rosterAgain = true;
+    else setRosterStatus(`Roster saved ${timeNow()}`);
+  } catch(err){ rosterOffline(err); }
+  finally { rosterBusy = false; if (rosterAgain){ rosterAgain = false; pushRoster(); } }
+}
+function scheduleRosterPush(){
+  if (!currentAdmin()) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushRoster, 800);
+}
+/* Save this browser's changes; if someone else saved first, merge and try again. */
+async function pushRoster(){
+  if (!currentAdmin()) return;
+  if (rosterBusy){ rosterAgain = true; return; }
+  if (shared.base && sameRoster(state, shared.base)) return;
+  if (!syncToken()){ rosterOffline({ status: 0 }); return; }
+  rosterBusy = true; setRosterStatus("Saving…");
+  try {
+    for (let attempt = 0; attempt < 5; attempt++){
+      const sent = snapshot(state);
+      const { r, j } = await rosterFetch("PUT", { data: sent, etag: shared.etag || null });
+      if (r.ok){
+        shared = { base: sent, etag: j.etag }; saveShared(); rosterOnline = true;
+        setRosterStatus(`Roster saved ${timeNow()}`);
+        if (!sameRoster(state, sent)) rosterAgain = true;
+        return;
+      }
+      if (r.status === 409 && j.data){
+        state = mergeRoster(shared.base, state, j.data);
+        shared = { base: snapshot(j.data), etag: j.etag }; saveShared();
+        try { localStorage.setItem(CONFIG.storageKey, JSON.stringify(state)); } catch(e){}
+        renderView();
+        continue;
+      }
+      throw Object.assign(new Error(j.error || `Server error ${r.status}`), { status: r.status });
+    }
+    throw new Error("Couldn't save: too many changes at once. Try again.");
+  } catch(err){ rosterOffline(err); }
+  finally { rosterBusy = false; if (rosterAgain){ rosterAgain = false; scheduleRosterPush(); } }
+}
+window.addEventListener("beforeunload", e => {
+  if (currentAdmin() && rosterOnline && shared.base && !sameRoster(state, shared.base)){ pushRoster(); e.preventDefault(); e.returnValue = ""; }
+});
+
 setInterval(() => { if (document.visibilityState === "visible") syncSignups(); }, SYNC_EVERY_MS);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && (!lastSync || Date.now() - lastSync > SYNC_EVERY_MS)) syncSignups();

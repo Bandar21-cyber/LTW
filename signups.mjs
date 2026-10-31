@@ -6,6 +6,8 @@
 //   POST   /api/admins    (admin) { email, password }          -> add an admin
 //   DELETE /api/admins?email=...  (admin)                      -> remove an admin added in the app
 //   POST   /api/password  (admin) { currentPassword, newPassword } -> change your own password
+//   GET    /api/roster    (admin)                              -> { data, etag }   the shared roster (null before first save)
+//   PUT    /api/roster    (admin) { data, etag }               -> { etag }         save; 409 { data, etag } if someone saved first
 //
 // "(admin)" = send header  Authorization: Bearer <token from /api/login>
 //
@@ -31,12 +33,18 @@ const BUILT_IN_ADMINS = [
   { email: "spencer.thunell@gmail.com", salt: "a63345dc53ab32b4011cb049a23792ac", hash: "b27f81860cc588d26341bed86f206739c47de22d4dde1da4f4c4041ec4a87bf9" }
 ];
 
-export const config = { path: ["/api/login", "/api/signups", "/api/admins", "/api/password"] };
+export const config = { path: ["/api/login", "/api/signups", "/api/admins", "/api/password", "/api/roster", "/api/health"] };
+const CODE_VERSION = "2026-10-31";
+const ROSTER_STORE = "roster-data";
+const ROSTER_KEY = "roster";
+const MAX_ROSTER_BYTES = 4 * 1024 * 1024;
 
 /* ---------- helpers ---------- */
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
-const apiToken = () => process.env.NETLIFY_API_TOKEN || (globalThis.Netlify?.env?.get?.("NETLIFY_API_TOKEN")) || "";
+// Tolerate common paste mistakes: spaces or line breaks, surrounding quotes, or a leading "Bearer ".
+const apiToken = () => String(process.env.NETLIFY_API_TOKEN || (globalThis.Netlify?.env?.get?.("NETLIFY_API_TOKEN")) || "")
+  .trim().replace(/^["']|["']$/g, "").replace(/^Bearer\s+/i, "").replace(/\s+/g, "");
 const normEmail = e => String(e || "").trim().toLowerCase();
 const validEmail = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 200;
 const isBuiltIn = e => BUILT_IN_ADMINS.some(a => a.email === e);
@@ -57,10 +65,11 @@ async function readBody(req){ try { return await req.json(); } catch { return {}
 /* ---------- admin account store (Netlify Blobs) ---------- */
 // Stored shape: { accounts: { "<email>": { salt, hash, addedBy?, addedAt?, changedAt? } } }
 // An entry for a built-in email is a password change; any other entry is an admin added in the app.
-async function store(){
-  if (globalThis.__ROSTER_TEST_STORE__) return globalThis.__ROSTER_TEST_STORE__;
+async function store(name = STORE_NAME){
+  const t = globalThis.__ROSTER_TEST_STORE__;
+  if (t) return typeof t === "function" ? t(name) : t;
   const { getStore } = await import("@netlify/blobs");
-  return getStore({ name: STORE_NAME, consistency: "strong" });
+  return getStore({ name, consistency: "strong" });
 }
 async function loadAccounts(){
   const s = await store();
@@ -179,6 +188,27 @@ async function admins(req, me){
   return json({ error: "Method not allowed" }, 405);
 }
 
+/* ---------- shared roster (volunteers, assignments, shift sizes) ---------- */
+async function roster(req, me){
+  const s = await store(ROSTER_STORE);
+  const current = async () => {
+    const res = await s.getWithMetadata(ROSTER_KEY, { type: "json" });
+    return { data: res?.data ?? null, etag: res?.etag || null };
+  };
+  if (req.method === "GET") return json(await current());
+  if (req.method !== "PUT") return json({ error: "Method not allowed" }, 405);
+  const raw = await req.text();
+  if (raw.length > MAX_ROSTER_BYTES) return json({ error: "The roster is too large to save." }, 413);
+  let body; try { body = JSON.parse(raw); } catch { return json({ error: "Invalid roster data." }, 400); }
+  const data = body?.data;
+  if (!data || !Array.isArray(data.volunteers) || !Array.isArray(data.assignments)) return json({ error: "Invalid roster data." }, 400);
+  data.savedBy = me; data.savedAt = new Date().toISOString();
+  const opts = body.etag ? { onlyIfMatch: body.etag } : { onlyIfNew: true };
+  const result = await s.setJSON(ROSTER_KEY, data, opts);
+  if (result?.modified === false) return json({ error: "Someone else saved first.", ...(await current()) }, 409);
+  return json({ etag: result?.etag || (await current()).etag });
+}
+
 async function changePassword(req, me){
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
   const { currentPassword = "", newPassword = "" } = await readBody(req);
@@ -194,9 +224,46 @@ async function changePassword(req, me){
   return json({ ok: true });
 }
 
+/* ---------- server check: open /api/health in a browser ---------- */
+async function health(context){
+  const checks = [];
+  const add = (name, ok, detail) => checks.push({ check: name, ok, detail });
+  add("Server code", true, `Version ${CODE_VERSION} is deployed.`);
+  const token = apiToken();
+  add("Access token set", !!token, token ? "NETLIFY_API_TOKEN is set." : "NETLIFY_API_TOKEN is missing. Add it under Project configuration > Environment variables (Functions scope), then trigger a deploy.");
+  const siteId = context?.site?.id || process.env.SITE_ID;
+  if (token && siteId){
+    try {
+      const r = await fetch(`https://api.netlify.com/api/v1/sites/${siteId}/forms`, { headers: { Authorization: `Bearer ${token}` } });
+      if (r.ok){
+        const forms = await r.json();
+        add("Access token works", true, "Netlify accepted the token.");
+        const f = forms.find(x => x.name === FORM_NAME);
+        add("Sign-up form found", !!f, f ? `"${FORM_NAME}" has ${f.submission_count ?? "?"} sign-ups.` : "No volunteer-signup form yet. Enable form detection (Project configuration > Forms), deploy, and submit a test sign-up.");
+      } else add("Access token works", false, r.status === 401
+        ? "Netlify rejected the token (invalid, expired or revoked). Create a new token, replace NETLIFY_API_TOKEN, then trigger a deploy."
+        : `Netlify answered ${r.status}: the token can't see this site. Create it while logged in to the account that owns this site.`);
+    } catch (e){ add("Access token works", false, "Couldn't reach the Netlify API: " + e.message); }
+  }
+  try {
+    const s = await store(ROSTER_STORE);
+    const res = await s.getWithMetadata(ROSTER_KEY, { type: "json" });
+    await s.setJSON("health-check", { at: new Date().toISOString() });
+    add("Shared storage", true, "Netlify Blobs can be read and written.");
+    add("Shared roster saved", !!res?.data, res?.data
+      ? `${res.data.volunteers?.length ?? 0} volunteers and ${res.data.assignments?.length ?? 0} assignments, last saved ${res.data.savedAt || "?"} by ${res.data.savedBy || "?"}.`
+      : "Nothing saved yet. Log in at /admin with the new index.html deployed; the first save creates it.");
+  } catch (e){
+    add("Shared storage", false, "Netlify Blobs isn't working: " + e.message + ". Make sure package.json and netlify.toml are at the top of the GitHub repository, then check the latest deploy log.");
+  }
+  const allOk = checks.every(c => c.ok);
+  return json({ summary: allOk ? "Everything is working." : "Something needs fixing: see the first check marked ok: false.", checks });
+}
+
 export default async (req, context) => {
-  if (!apiToken()) return json({ error: "NETLIFY_API_TOKEN isn't set in this site's environment variables." }, 503);
   const path = new URL(req.url).pathname.replace(/\/+$/, "");
+  if (path.endsWith("/health")) return await health(context);
+  if (!apiToken()) return json({ error: "NETLIFY_API_TOKEN isn't set in this site's environment variables." }, 503);
   try {
     if (path.endsWith("/login")) return await login(req);
     const me = await verifyToken(req);
@@ -204,10 +271,12 @@ export default async (req, context) => {
     if (path.endsWith("/signups")) return await signups(req, context);
     if (path.endsWith("/admins")) return await admins(req, me);
     if (path.endsWith("/password")) return await changePassword(req, me);
+    if (path.endsWith("/roster")) return await roster(req, me);
     return json({ error: "Not found" }, 404);
   } catch (err){
     console.error(err);
-    if (err.status === 401 || err.status === 403) return json({ error: "Netlify rejected the access token. Check NETLIFY_API_TOKEN." }, 502);
+    if (err.status === 401) return json({ error: "Netlify rejected the access token: it's invalid, expired or was revoked. Create a new token and replace NETLIFY_API_TOKEN, then redeploy.", code: "token_invalid" }, 502);
+    if (err.status === 403 || err.status === 404) return json({ error: "The access token works but can't see this site. Create the token while logged in to the Netlify account that owns this site, then replace NETLIFY_API_TOKEN and redeploy.", code: "token_no_access" }, 502);
     return json({ error: "Something went wrong on the server. Try again shortly." }, 500);
   }
 };
